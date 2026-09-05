@@ -1,0 +1,4 @@
+pillow>=10
+numpy>=1.24
+scapy>=2.5        # שליחת פריימי L2 — ב-Windows דורש Npcap
+pyyaml>=6

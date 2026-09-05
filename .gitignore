@@ -1,0 +1,35 @@
+# סודות - לעולם לא עולים לגיט
+config/openrouter.key
+config/*.key
+.env
+*.env
+
+# מצב מקומי של המכונה
+config/devices.yaml
+memory/
+workspace/
+media/
+data/
+*.log
+*.err
+*.pcapng
+
+# סביבה וזמניים
+.venv/
+__pycache__/
+*.pyc
+*.bak
+probe_*.png
+media_test.gif
+tm_*.jpg
+g_*.jpg
+shot_*.jpg
+cam*.jpg
+
+# תוכן אישי ופלט ריצה
+social/
+vision_state.json
+hear_probe.wav
+*.jpg
+face_preview.png
+preview.gif

@@ -1,0 +1,11 @@
+{
+  "mode": "flat_2x2",
+  "canvas": [128, 128],
+  "panels": [
+    {"port": "J1", "size": [64, 64], "canvas_xy": [0, 0]},
+    {"port": "J2", "size": [64, 64], "canvas_xy": [64, 0]},
+    {"port": "J3", "size": [64, 64], "canvas_xy": [0, 64]},
+    {"port": "J4", "size": [64, 64], "canvas_xy": [64, 64]}
+  ],
+  "note": "המיפוי הזה חייב להיות זהה ל-Screen Connection ב-LEDVISION"
+}

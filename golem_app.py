@@ -20,7 +20,7 @@ SESSIONS = set()
 LOGIN_FAILS = []                   # חותמות זמן של ניסיונות כושלים
 MAX_BODY = 12_000_000              # תקרת גוף בקשה, מונעת הצפת זיכרון
 STATE = {"panels": {}, "focus": WM.PANELS[0]["name"], "brightness": 38,
-         "presence": False, "level": 0.0, "updated": 0}
+         "presence": False, "level": 0.0, "updated": 0, "desktop": False}
 LIVE_PORTS = ("J1", "J2")          # היציאות המחוברות בפועל
 MEDIA = ROOT / "media"             # מדיה שהועלתה מהממשק
 PERSONAS = json.loads((ROOT / "personas.json").read_text(encoding="utf-8"))
@@ -43,19 +43,53 @@ SPEAKING = threading.Lock()        # ponytail: רמקול אחד, דובר אח�
 
 
 def speak_from(panel, text):
-    """מדבר בקול, ופותח את הפה של הפאנל שנבחר בלבד."""
+    """מדבר בקול, ופותח את הפה של הפאנל שנבחר. אם קלוד על שולחן העבודה,
+    הפה שלו שם זז יחד איתו."""
     from senses import voice
+
+    def mouth(amp):
+        udp({"state": "speak", "amp": float(amp)})
+        if STATE.get("desktop"):
+            desk({"state": "speak", "amp": float(amp)})
+
     with SPEAKING:
         udp({"goto": panel})
         udp({"panel": panel, "panel_mode": "face"})
         try:
-            voice.say(text, on_amp=lambda a: udp({"state": "speak", "amp": float(a)}))
+            voice.say(text, on_amp=mouth)
         except Exception as exc:
             print("קול נכשל:", exc, flush=True)
         udp({"state": "idle", "amp": 0.0})
+        if STATE.get("desktop"):
+            desk({"state": "idle", "amp": 0.0})
 
 
 PARTY = {"running": False}
+DESKTOP_ADDR = ("127.0.0.1", 9998)
+DESKTOP_PROC = {"handle": None}
+
+
+def desk(msg):
+    """פקודה לקלוד שעל שולחן העבודה."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        s.sendto(json.dumps(msg).encode(), DESKTOP_ADDR)
+
+
+def desktop_running():
+    proc = DESKTOP_PROC["handle"]
+    return proc is not None and proc.poll() is None
+
+
+def start_desktop():
+    """מרים את חלון שולחן העבודה. אותו מפרש פייתון, כדי שיעבוד גם מ-USB."""
+    import subprocess
+    exe = Path(sys.executable)
+    pyw = exe.with_name("pythonw.exe")
+    DESKTOP_PROC["handle"] = subprocess.Popen(
+        [str(pyw if pyw.exists() else exe), str(ROOT / "desktop_claude.py")],
+        cwd=str(ROOT))
+    time.sleep(1.5)                       # להספיק לתפוס את הפורט לפני הפקודה
+    return DESKTOP_PROC["handle"]
 
 
 def party_lights(step):
@@ -250,6 +284,27 @@ class Handler(BaseHTTPRequestHandler):
                              daemon=True).start()
             return self._send(200, {"ok": True, "reply": reply})
 
+        if path == "/api/desktop":
+            # קלוד עובר בין הקיר לשולחן העבודה
+            action = body.get("action")
+            if action == "out":
+                if not desktop_running():
+                    start_desktop()
+                udp({"panel": STATE["focus"], "panel_mode": "off"})
+                desk({"show": True, "mode": body.get("mode", "critter"),
+                      "size": int(body.get("size", 160))})
+                STATE["desktop"] = True
+            elif action == "back":
+                desk({"hide": True})
+                udp({"panel": STATE["focus"], "panel_mode": "clear"})
+                udp({"goto": STATE["focus"]})
+                STATE["desktop"] = False
+            elif action == "size":
+                desk({"size": int(body.get("size", 160))})
+            else:
+                return self._send(400, {"error": "bad action"})
+            return self._send(200, {"ok": True, "desktop": STATE["desktop"]})
+
         if path == "/api/party":
             if PARTY["running"]:
                 return self._send(409, {"error": "המסיבה כבר רצה"})
@@ -421,6 +476,13 @@ input[type=range]{accent-color:var(--brand);flex:1;min-width:140px}
     <button class="chip" id="magicBtn">✨ מצב קסם</button>
     <button class="chip" id="clearBtn">נקה</button>
     <button class="chip" id="hearBtn">🎤 הוא מקשיב</button>
+  </div>
+  <div class="bar">
+    <button class="chip" id="outBtn">🖥️ צא לשולחן העבודה</button>
+    <button class="chip" id="backBtn">↩️ חזור לקיר</button>
+    <label for="dsize">גודל</label>
+    <input id="dsize" type="range" min="64" max="512" value="160">
+    <span id="dsizeVal">160</span>
   </div>
   <div class="bar"><span id="heardLabel">מה שנשמע יופיע כאן</span></div>
 
@@ -604,6 +666,17 @@ $('#magicBtn').onclick = () => {
   if(magic && !sensing) $('#senseBtn').click();
 };
 $('#clearBtn').onclick = () => api('/api/paint', {clear: true});
+
+// קלוד בין הקיר לשולחן העבודה
+$('#outBtn').onclick = async () => {
+  $('#outBtn').textContent = '🖥️ יוצא...';
+  try{ await api('/api/desktop', {action: 'out', size: +$('#dsize').value}); }
+  catch(e){ $('#heardLabel').textContent = 'שגיאה: ' + e.message; }
+  $('#outBtn').textContent = '🖥️ צא לשולחן העבודה';
+};
+$('#backBtn').onclick = () => api('/api/desktop', {action: 'back'});
+$('#dsize').oninput = e => { $('#dsizeVal').textContent = e.target.value; };
+$('#dsize').onchange = e => api('/api/desktop', {action: 'size', size: +e.target.value});
 
 // הרשת החברתית של הקלודים
 function when(ts){

@@ -285,6 +285,10 @@ try:
                         set_panel(panel, mode=m.get("panel_mode"),
                                   path=m.get("panel_image"),
                                   hat=m.get("panel_hat"), expr=m.get("panel_expr"))
+                        # הכובע/הבעה חלים גם על הדמות הראשית שמצוירת מעל הפאנל,
+                        # אחרת השינוי לא נראה כשהדמות הראשית יושבת שם
+                        if m.get("panel_hat") or m.get("panel_expr"):
+                            crt.set(hat=m.get("panel_hat"), expr=m.get("panel_expr"))
                     if m.get("brightness") is not None:
                         wall.brightness = max(5, min(100, int(m["brightness"])))
                         wall.set_brightness(wall.brightness)

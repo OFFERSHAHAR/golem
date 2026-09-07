@@ -18,7 +18,7 @@ PASSWORD = os.environ.get("GOLEM_PASSWORD", "1892346")
 ENGINE = ("127.0.0.1", 9999)
 SESSIONS = set()
 LOGIN_FAILS = []                   # חותמות זמן של ניסיונות כושלים
-MAX_BODY = 12_000_000              # תקרת גוף בקשה, מונעת הצפת זיכרון
+MAX_BODY = 80_000_000              # תקרת גוף בקשה (וידאו קצר מותר)
 STATE = {"panels": {}, "focus": WM.PANELS[0]["name"], "brightness": 38,
          "presence": False, "level": 0.0, "updated": 0, "desktop": False}
 LIVE_PORTS = ("J1", "J2")          # היציאות המחוברות בפועל
@@ -28,6 +28,12 @@ PERSONAS = json.loads((ROOT / "personas.json").read_text(encoding="utf-8"))
 PERSONA_OF = {"J1.1": "claude", "J1.2": "sharp", "J2.1": "nudge", "J2.2": "lazy"}
 
 CHARACTERS = json.loads((ROOT / "characters.json").read_text(encoding="utf-8"))
+# כובעים והבעות שהיצור (critter) יודע ללבוש — מתוך face/critter.py
+HATS = {"none": "בלי", "chef": "🧑‍🍳 שף", "wizard": "🧙 קוסם", "cowboy": "🤠 בוקר",
+        "cape": "🦸 גלימה", "suit": "🕴️ חליפה", "crown": "👑 כתר",
+        "headphones": "🎧 אוזניות", "party": "🎉 מסיבה", "goggles": "🥽 משקפי מגן"}
+EXPRS = {"neutral": "רגיל", "happy": "😄 שמח", "wink": "😉 קריצה", "closed": "😌 עצום",
+         "cool": "😎 מגניב", "surprised": "😲 מופתע", "sad": "🙁 עצוב"}
 
 
 def udp(msg):
@@ -142,7 +148,9 @@ def html_page():
     people = json.dumps(PERSONAS, ensure_ascii=False)
     return (TEMPLATE.replace("__PANELS__", panels)
                     .replace("__CHARACTERS__", chars)
-                    .replace("__PERSONAS__", people))
+                    .replace("__PERSONAS__", people)
+                    .replace("__HATS__", json.dumps(HATS, ensure_ascii=False))
+                    .replace("__EXPRS__", json.dumps(EXPRS, ensure_ascii=False)))
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -220,6 +228,24 @@ class Handler(BaseHTTPRequestHandler):
             STATE["updated"] = time.time()
             return self._send(200, {"ok": True})
 
+        if path == "/api/dress":
+            # כובע והבעה לפאנל — עובד רק על היצור (critter)
+            name = body.get("panel")
+            hat, expr = body.get("hat"), body.get("expr")
+            if name not in WM.PANEL_INDEX:
+                return self._send(400, {"error": "bad panel"})
+            if hat and hat not in HATS:
+                return self._send(400, {"error": "bad hat"})
+            if expr and expr not in EXPRS:
+                return self._send(400, {"error": "bad expr"})
+            msg = {"panel": name}
+            if hat:
+                msg["panel_hat"] = hat
+            if expr:
+                msg["panel_expr"] = expr
+            udp(msg)
+            return self._send(200, {"ok": True})
+
         if path == "/api/focus":
             name = body.get("panel")
             if name not in WM.PANEL_INDEX:
@@ -259,13 +285,18 @@ class Handler(BaseHTTPRequestHandler):
             if name not in WM.PANEL_INDEX or "," not in data_url:
                 return self._send(400, {"error": "bad panel or data"})
             head, b64 = data_url.split(",", 1)
-            ext = ".gif" if "gif" in head else (".png" if "png" in head else ".jpg")
+            if "gif" in head: ext = ".gif"
+            elif "mp4" in head or "video/mp4" in head: ext = ".mp4"
+            elif "webm" in head: ext = ".webm"
+            elif "quicktime" in head or "mov" in head: ext = ".mov"
+            elif "png" in head: ext = ".png"
+            else: ext = ".jpg"
             try:
                 raw = base64.b64decode(b64, validate=True)
             except Exception:
                 return self._send(400, {"error": "bad base64"})
-            if len(raw) > 12_000_000:
-                return self._send(413, {"error": "הקובץ גדול מדי"})
+            if len(raw) > 60_000_000:
+                return self._send(413, {"error": "הקובץ גדול מדי — נסה וידאו קצר יותר"})
             MEDIA.mkdir(exist_ok=True)
             dest = MEDIA / f"{name.replace('.', '_')}{ext}"
             dest.write_bytes(raw)
@@ -422,6 +453,8 @@ input[type=password]{width:100%;min-height:48px;border:1px solid var(--line);
   color:var(--dim)}
 .media:hover{border-color:var(--brand);color:#ffc0a3}
 .prow{margin-top:8px}
+.hat,.expr{flex:1;min-height:40px;border:1px solid var(--line);border-radius:9px;
+  background:#101014;color:var(--ink);padding:0 8px;font-size:.82rem}
 .persona{width:100%;min-height:42px;border:1px solid var(--line);border-radius:9px;
   background:#101014;color:var(--ink);padding:0 10px;font-size:.85rem}
 .forget{width:100%;min-height:38px;border:1px solid var(--line);border-radius:9px;
@@ -506,6 +539,7 @@ input[type=range]{accent-color:var(--brand);flex:1;min-width:140px}
 <video id="cam" playsinline muted></video>
 <script>
 const PANELS = __PANELS__, CHARACTERS = __CHARACTERS__, PERSONAS = __PERSONAS__;
+const HATS = __HATS__, EXPRS = __EXPRS__;
 const $ = s => document.querySelector(s);
 let sensing = false, magic = false, hue = 20;
 let focusPanel = PANELS.length ? PANELS[0].name : null;   // מי עונה כשמדברים
@@ -539,8 +573,9 @@ function build(){
                    '<div class="row"><input class="talk" type="text" placeholder="דבר מהפאנל הזה..."></div>' +
                    '<div class="row"><button class="say">אמור</button>' +
                    '<button class="ask">שאל את המוח</button></div>' +
-                   '<div class="row"><label class="media">העלה מדיה' +
-                   '<input type="file" accept="image/*" hidden></label></div>' +
+                   '<div class="row"><select class="hat"></select><select class="expr"></select></div>' +
+                   '<div class="row"><label class="media">🖼️ תמונה / וידאו' +
+                   '<input type="file" accept="image/*,video/*" hidden></label></div>' +
                    '<div class="crop" hidden><canvas class="cropcv" width="128" height="128"></canvas>' +
                    '<div class="croprow"><label>גודל</label>' +
                    '<input class="zoom" type="range" min="100" max="400" value="100"></div>' +
@@ -570,6 +605,18 @@ function build(){
       send.classList.add('on');
       focusPanel = p.name;                 // מי שקלוד אצלו הוא גם מי שעונה
     };
+    // כובע והבעה — נחשפים כל מה שהמנוע יודע ללבוש
+    const hatSel = el.querySelector('.hat'), exprSel = el.querySelector('.expr');
+    const optName = '— כובע —';
+    Object.entries(HATS).forEach(([k, label]) => {
+      const o = document.createElement('option'); o.value = k; o.textContent = label; hatSel.appendChild(o);
+    });
+    Object.entries(EXPRS).forEach(([k, label]) => {
+      const o = document.createElement('option'); o.value = k; o.textContent = label; exprSel.appendChild(o);
+    });
+    hatSel.onchange = () => api('/api/dress', {panel: p.name, hat: hatSel.value});
+    exprSel.onchange = () => api('/api/dress', {panel: p.name, expr: exprSel.value});
+
     const box = el.querySelector('.talk'), reply = el.querySelector('.reply');
     const run = async (route) => {
       const text = box.value.trim();
@@ -613,8 +660,8 @@ function build(){
       const fr = new FileReader();
       fr.onload = () => {
         raw = fr.result;
-        if(file.type === 'image/gif'){        // אנימציה נשלחת שלמה, בלי חיתוך
-          reply.textContent = 'שולח אנימציה...';
+        if(file.type === 'image/gif' || file.type.startsWith('video/')){  // נשלח שלם, בלי חיתוך
+          reply.textContent = file.type.startsWith('video/') ? 'מעלה וידאו (רגע)...' : 'שולח אנימציה...';
           api('/api/media', {panel: p.name, data: raw})
             .then(r => reply.textContent = 'מוצג: ' + r.file)
             .catch(e => reply.textContent = 'שגיאה: ' + e.message);

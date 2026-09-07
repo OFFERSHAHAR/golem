@@ -108,7 +108,10 @@ panel_clock = {}          # "J1.2" -> (index, started_at)
 
 
 def load_media(path):
-    """טוען תמונה או אנימציה ומתאים אותה ל-64x64. מחזיר רשימת (פריים, שניות)."""
+    """טוען תמונה, GIF או וידאו ומתאים ל-64x64. מחזיר רשימת (פריים, שניות)."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext in (".mp4", ".mov", ".avi", ".webm", ".mkv"):
+        return load_video(path)
     frames = []
     with Image.open(path) as src:
         count = getattr(src, "n_frames", 1)
@@ -118,6 +121,27 @@ def load_media(path):
             delay = max(0.04, src.info.get("duration", 80) / 1000.0)
             frames.append((frame.copy(), delay))
     return frames
+
+
+def load_video(path, max_frames=300):
+    """מפרק וידאו לפריימים של 64x64. דוגם עד ~20fps כדי לא להעמיס."""
+    import cv2
+    cap = cv2.VideoCapture(path)
+    src_fps = cap.get(cv2.CAP_PROP_FPS) or 20.0
+    step = max(1, int(round(src_fps / 20.0)))      # ponytail: מוריד ל-~20fps
+    delay = step / src_fps
+    frames, i = [], 0
+    while len(frames) < max_frames:
+        ok, bgr = cap.read()
+        if not ok:
+            break
+        if i % step == 0:
+            rgb = cv2.cvtColor(cv2.resize(bgr, (WM.PANEL, WM.PANEL),
+                                          interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2RGB)
+            frames.append((Image.fromarray(rgb), max(0.04, delay)))
+        i += 1
+    cap.release()
+    return frames or [(Image.new("RGB", (WM.PANEL, WM.PANEL)), 0.1)]
 
 
 def current_frame(name):
@@ -135,8 +159,8 @@ def current_frame(name):
     return frames[index][0]
 
 
-def set_panel(name, mode=None, path=None):
-    """שליטה נפרדת בפאנל בודד בתוך שרשרת. גובר על תוכן היציאה."""
+def set_panel(name, mode=None, path=None, hat=None, expr=None):
+    """שליטה נפרדת בפאנל: מראה, כובע והבעה. גובר על תוכן היציאה."""
     if name not in WM.PANEL_INDEX:
         return
     slot = WM.PANELS[WM.PANEL_INDEX[name]]
@@ -146,14 +170,18 @@ def set_panel(name, mode=None, path=None):
         panel_clock[name] = (0, time.monotonic())
         panel_renderers.pop(name, None)
         return
-    panel_images.pop(name, None)
-    panel_clock.pop(name, None)
-    if mode == "off":
-        panel_renderers[name] = None
-    elif mode in ("critter", "spark", "face"):
-        panel_renderers[name] = Creature(mode=mode, brightness=0.85)
-    elif mode == "clear":                       # חזרה לתוכן של היציאה
-        panel_renderers.pop(name, None)
+    if mode is not None:
+        panel_images.pop(name, None)
+        panel_clock.pop(name, None)
+        if mode == "off":
+            panel_renderers[name] = None
+        elif mode in ("critter", "spark", "face"):
+            panel_renderers[name] = Creature(mode=mode, brightness=0.85)
+        elif mode == "clear":                   # חזרה לתוכן של היציאה
+            panel_renderers.pop(name, None)
+    # כובע והבעה חלים על הדמות שכבר יושבת בפאנל
+    if (hat or expr) and panel_renderers.get(name):
+        panel_renderers[name].set(hat=hat, expr=expr)
 
 
 def set_port_mode(index, mode):
@@ -255,7 +283,8 @@ try:
                     panel = m.get("panel")
                     if panel:
                         set_panel(panel, mode=m.get("panel_mode"),
-                                  path=m.get("panel_image"))
+                                  path=m.get("panel_image"),
+                                  hat=m.get("panel_hat"), expr=m.get("panel_expr"))
                     if m.get("brightness") is not None:
                         wall.brightness = max(5, min(100, int(m["brightness"])))
                         wall.set_brightness(wall.brightness)

@@ -175,7 +175,7 @@ def set_panel(name, mode=None, path=None, hat=None, expr=None):
         panel_clock.pop(name, None)
         if mode == "off":
             panel_renderers[name] = None
-        elif mode in ("critter", "spark", "face"):
+        elif mode in ("critter", "spark", "face", "bart"):
             panel_renderers[name] = Creature(mode=mode, brightness=0.85)
         elif mode == "clear":                   # חזרה לתוכן של היציאה
             panel_renderers.pop(name, None)
@@ -348,7 +348,15 @@ try:
                 panel.paste(icon, ((WM.PORT_WIDTHS[i] - 64) // 2, 0))
             x = WM.PORT_OFFSETS[i]
             phys[:, x:x+WM.PORT_WIDTHS[i]] = np.asarray(panel, dtype=np.uint8)
-        for name, renderer in list(panel_renderers.items()) :
+        # ponytail: הדמות הראשית הנודדת מצוירת לפני תוכן הפאנלים, כדי שתמונה/דמות
+        # שהוקצתה במפורש לפאנל תמיד תנצח עליה (אחרת היא מסתירה את פאנל 1)
+        x_cur += (x_target - x_cur) * 0.12
+        x0 = int(round(x_cur))
+        yy, hh = max(0, y0), min(S, WM.PHYS_H - max(0, y0))
+        xs, xe = max(0, x0), min(WM.PHYS_W, x0 + S)
+        if hh > 0 and xe > xs and port_visible[0]:
+            phys[yy:yy+hh, xs:xe] = arr[max(0, -y0):max(0, -y0)+hh, xs-x0:xe-x0]
+        for name, renderer in list(panel_renderers.items()):
             slot = WM.PANELS[WM.PANEL_INDEX[name]]
             x = slot["src_x"]
             if renderer is None:
@@ -363,14 +371,6 @@ try:
                 continue
             x = WM.PANELS[WM.PANEL_INDEX[name]]["src_x"]
             phys[:, x:x+WM.PANEL] = np.asarray(frame, dtype=np.uint8)
-
-        # ponytail: הדמות מצוירת אחרונה, ולכן היא יכולה לעבור בין היציאות
-        x_cur += (x_target - x_cur) * 0.12
-        x0 = int(round(x_cur))
-        yy, hh = max(0, y0), min(S, WM.PHYS_H - max(0, y0))
-        xs, xe = max(0, x0), min(WM.PHYS_W, x0 + S)
-        if hh > 0 and xe > xs and port_visible[0]:
-            phys[yy:yy+hh, xs:xe] = arr[max(0, -y0):max(0, -y0)+hh, xs-x0:xe-x0]
         if paint.any():                      # שכבת הקסם מעל הכול, ודוהה מעצמה
             paint *= PAINT_FADE
             paint[paint < 2] = 0

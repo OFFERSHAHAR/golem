@@ -9,7 +9,7 @@ PY = ROOT / ".venv" / "Scripts" / "python.exe"
 PYW = ROOT / ".venv" / "Scripts" / "pythonw.exe"
 JOBS = [
     ("wall", [str(PY), "golem_live.py", "--brightness", "38", "--idle", "0"]),
-    ("control", [str(PYW), "-u", "-B", "golem_app.py"]),
+    ("control", [str(PYW), "-u", "-B", "golem_app.py", "--port", "8770"]),
 ]
 BACKOFF_MAX = 30
 

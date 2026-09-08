@@ -13,11 +13,12 @@ from PIL import Image
 from .spark import Spark
 from .minimal import MinimalFace
 from .critter import Critter
+from .bart import Bart
 
 N = 128
 COLLAPSE = 0.20
 EXPAND = 0.40
-MODES = ("critter", "spark", "face")
+MODES = ("critter", "spark", "face", "bart")
 
 
 def _ease_out(p):
@@ -28,7 +29,8 @@ class Creature:
     def __init__(self, mode="critter", theme="dark", brightness=0.85):
         self.r = {"spark": Spark(theme=theme, brightness=brightness),
                   "face": MinimalFace(brightness=brightness),
-                  "critter": Critter(brightness=brightness)}
+                  "critter": Critter(brightness=brightness),
+                  "bart": Bart(brightness=brightness)}
         self.mode = mode if mode in MODES else "critter"
         self._target = self.mode
         self._t0 = 0.0

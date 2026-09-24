@@ -222,17 +222,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(400, {"error": "bad json"})
 
         if path == "/api/login":
-            now = time.time()
-            LOGIN_FAILS[:] = [t for t in LOGIN_FAILS if now - t < 300]
-            if len(LOGIN_FAILS) >= 8:         # נעילה אחרי 8 כשלונות ב-5 דקות
-                return self._send(429, {"error": "יותר מדי ניסיונות. נסה בעוד כמה דקות."})
+            # ponytail: השרת מאזין ל-localhost בלבד, אין סכנת פריצה מבחוץ,
+            # ולכן אין נעילה — היא רק חסמה את הבעלים. סיסמה בלבד.
             if hmac.compare_digest(str(body.get("password", "")), PASSWORD):
                 token = secrets.token_urlsafe(24)
                 SESSIONS.add(token)
-                LOGIN_FAILS.clear()
                 return self._send(200, {"ok": True}, cookie=token)
-            LOGIN_FAILS.append(now)
-            time.sleep(0.6)                   # ponytail: השהיה פשוטה נגד ניחוש סיסמה
             return self._send(401, {"error": "קוד שגוי"})
 
         if not self._authed():

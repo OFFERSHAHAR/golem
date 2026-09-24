@@ -46,12 +46,29 @@ def live_panels():
 
 
 SPEAKING = threading.Lock()        # ponytail: רמקול אחד, דובר אחד בכל רגע
+SILENCE = {"until": 0.0}           # עד מתי לבלוע דיבור אחרי "עצור"
+
+
+def stop_talking():
+    """עוצר מיד את הדיבור הנוכחי ובולע כל דיבור שכבר בתור לכ-2 שניות."""
+    SILENCE["until"] = time.time() + 2.0
+    try:
+        import sounddevice as sd
+        sd.stop()                  # קוטע את ההשמעה הנוכחית
+    except Exception:
+        pass
+    udp({"state": "idle", "amp": 0.0})
+    if STATE.get("desktop"):
+        desk({"state": "idle", "amp": 0.0})
 
 
 def speak_from(panel, text):
     """מדבר בקול, ופותח את הפה של הפאנל שנבחר. אם קלוד על שולחן העבודה,
     הפה שלו שם זז יחד איתו."""
     from senses import voice
+    if time.time() < SILENCE["until"]:     # נתבקש שקט — לא מתחילים לדבר
+        udp({"state": "idle", "amp": 0.0})
+        return
 
     def mouth(amp):
         udp({"state": "speak", "amp": float(amp)})
@@ -59,6 +76,8 @@ def speak_from(panel, text):
             desk({"state": "speak", "amp": float(amp)})
 
     with SPEAKING:
+        if time.time() < SILENCE["until"]:
+            return
         udp({"goto": panel})
         udp({"panel": panel, "panel_mode": "face"})
         try:
@@ -261,6 +280,10 @@ class Handler(BaseHTTPRequestHandler):
             STATE.update(presence=present, level=level, updated=time.time())
             udp({"state": "speak" if level > 0.12 else ("listen" if present else "idle"),
                  "amp": level, "gaze": [float(gaze[0]), float(gaze[1])]})
+            return self._send(200, {"ok": True})
+
+        if path == "/api/stop":
+            stop_talking()
             return self._send(200, {"ok": True})
 
         if path == "/api/brightness":
@@ -509,6 +532,7 @@ input[type=range]{accent-color:var(--brand);flex:1;min-width:140px}
     <button class="chip" id="magicBtn">✨ מצב קסם</button>
     <button class="chip" id="clearBtn">נקה</button>
     <button class="chip" id="hearBtn">🎤 הוא מקשיב</button>
+    <button class="chip" id="stopBtn" style="border-color:#ff6b4b;color:#ff8f6b">🤫 שתוק / עצור</button>
   </div>
   <div class="bar">
     <button class="chip" id="outBtn">🖥️ צא לשולחן העבודה</button>
@@ -713,6 +737,7 @@ $('#magicBtn').onclick = () => {
   if(magic && !sensing) $('#senseBtn').click();
 };
 $('#clearBtn').onclick = () => api('/api/paint', {clear: true});
+$('#stopBtn').onclick = () => { api('/api/stop', {}); $('#heardLabel').textContent = 'שקט.'; };
 
 // קלוד בין הקיר לשולחן העבודה
 $('#outBtn').onclick = async () => {
@@ -822,41 +847,63 @@ $('#senseBtn').onclick = async () => {
     const an = ctx.createAnalyser(); an.fftSize = 512;
     ctx.createMediaStreamSource(stream).connect(an);
     const buf = new Uint8Array(an.frequencyBinCount);
-    const cv = document.createElement('canvas'); cv.width = 64; cv.height = 48;
+    const cv = document.createElement('canvas'); cv.width = 80; cv.height = 60;
     const g = cv.getContext('2d', {willReadFrequently: true});
     let prev = null;
+    let gx = 0, gy = 0;                 // מבט מוחלק שנשמר בין פריימים
     sensing = true;
     $('#dot').classList.add('live');
     $('#senseLabel').textContent = 'חיישנים פעילים';
     $('#senseBtn').textContent = 'פעיל';
     setInterval(async () => {
+      // --- קול: עוצמה עם רגישות גבוהה יותר ---
       an.getByteTimeDomainData(buf);
       let sum = 0;
       for(const v of buf){ const d = (v - 128) / 128; sum += d * d; }
-      const level = Math.min(1, Math.sqrt(sum / buf.length) * 4);
+      const level = Math.min(1, Math.sqrt(sum / buf.length) * 6);
       $('#meter').style.width = (level * 100).toFixed(0) + '%';
+
       g.drawImage(cam, 0, 0, cv.width, cv.height);
       const cur = g.getImageData(0, 0, cv.width, cv.height).data;
-      let mass = 0, cx = 0, cy = 0;
+      const W = cv.width, H = cv.height;
+
+      // --- מבט: מרכז הכובד של גוון-עור = מיקום הפנים (עוקב גם כשעומדים) ---
+      let sMass = 0, sx = 0, sy = 0;
+      for(let i = 0, px = 0; i < cur.length; i += 4, px++){
+        const r = cur[i], gg = cur[i+1], b = cur[i+2];
+        if(r > 95 && gg > 40 && b > 20 && r > gg && r > b && (r - Math.min(gg,b)) > 15){
+          sMass++; sx += px % W; sy += (px / W) | 0;
+        }
+      }
+      const face = sMass > 25;
+      if(face){
+        // מראה אופקית כדי שהמבט ילך לכיוונך; החלקה
+        const tx = 1 - (sx / sMass) / W * 2 + 0;      // 0..W -> 1..-1 (מראה)
+        const ty = (sy / sMass) / H * 2 - 1;
+        gx += (tx - gx) * 0.35;
+        gy += (ty * 0.7 - gy) * 0.35;
+      }
+      // אם אין פנים — לא קופצים למרכז, נשארים איפה שהיינו
+
+      // --- תנועה: רק בשביל הקסם ---
+      let mMass = 0, mx = 0, my = 0;
       if(prev){
         for(let i = 0, px = 0; i < cur.length; i += 4, px++){
-          if(Math.abs(cur[i] - prev[i]) > 24){ mass++; cx += px % cv.width; cy += (px / cv.width) | 0; }
+          if(Math.abs(cur[i] - prev[i]) > 22){ mMass++; mx += px % W; my += (px / W) | 0; }
         }
       }
       prev = cur;
-      const present = mass > 12;
-      const gaze = present ? [(cx / mass) / cv.width * 2 - 1, (cy / mass) / cv.height * 2 - 1] : [0, 0];
-      try{ await api('/api/sense', {level, present, gaze}); }catch(e){}
+
+      try{ await api('/api/sense', {level, present: face, gaze: [gx, gy]}); }catch(e){}
       feedHearing(level, stream);
-      if(magic && present){
-        // תנועה מול המצלמה -> משיכת מכחול על הקיר. מראה, כדי שיהיה טבעי
-        const nx = 1 - (cx / mass) / cv.width;
-        const ny = (cy / mass) / cv.height;
+      if(magic && mMass > 15){
+        const nx = 1 - (mx / mMass) / W;
+        const ny = (my / mMass) / H;
         hue = (hue + 7) % 360;
-        const power = Math.min(1, mass / 320 + level);
+        const power = Math.min(1, mMass / 400 + level);
         try{ await api('/api/paint', {dabs: [[nx, ny, power, hue]]}); }catch(e){}
       }
-    }, 200);
+    }, 120);
   }catch(e){ $('#senseLabel').textContent = 'אין גישה למצלמה או למיקרופון'; }
 };
 </script></body></html>

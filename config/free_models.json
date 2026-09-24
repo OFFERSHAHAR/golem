@@ -1,10 +1,10 @@
 {
- "at": 1788762960.8772259,
+ "at": 1789724259.1079721,
  "models": [
-  "minimax/minimax-m3:free",
+  "deepseek/deepseek-v4-flash-0731:free",
+  "qwen/qwen3.8-27b:free",
+  "z-ai/glm-5.2:free",
   "thinkingmachines/inkling-small:free",
-  "thinkingmachines/inkling:free",
-  "nvidia/nemotron-3-ultra-550b-a55b:free",
-  "nvidia/nemotron-3.5-lightning:free"
+  "thinkingmachines/inkling:free"
  ]
 }
